@@ -1,78 +1,81 @@
 import requests
-from pprint import pprint
-from datetime import datetime
-import json
+# import pprint
+import PySimpleGUI
+import time
 
 
-class YaUploader:
+def vk_download():
+    id_vk = int(input("Введите id пользователя: "))
+    pictures = {}
+    uri_vk = "https://api.vk.com/method/photos.get?owner_id="
+    version = "&v=5.131"
+    tok_test =input("Введите токен VK: ")
+    access_token = "&album_id=wall&extended=1&access_token" \
+                   "=" + tok_test
+    url = uri_vk + str(id_vk) + access_token + version
+    response = requests.get(url=url)
+    if response.status_code != 200:
+        print("Неверный ответ с сервера\n")
+    else:
+        for object_ in response.json()['response']['items']:
+            max_size = 0
+            url_picture = []
+            pictures[object_['id']] = []
+            pictures[object_['id']].append(object_['likes']['count'])
+            pictures[object_['id']].append(object_['date'])
+            for size in object_['sizes']:
+                if size['height'] > max_size:
+                    max_size = size['height']
+                    url_picture = size['url']
+            pictures[object_['id']].append(url_picture)
+        print("Данные получены. Можно начинать загрузку\n")
+        return pictures
 
-    def __init__(self, access_token: str):
-        self.access_token = access_token
 
-    def get_status(self, url):
-        return requests.get(url, headers={"Authorization": "OAuth " + self.access_token}).json()['status']
+def ya_disk_upload(data, index):
+    token = input("Введите свой токен от яндекс.Диска: ")
+    ya_headers = {'Content-Type': 'application/json', 'Authorization': f'OAuth {token}'}
+    ya_upload_url = "https://cloud-api.yandex.net/v1/disk/resources/upload?"
 
-    def upload(self, file_name, file_url):
-        requests.put("https://cloud-api.yandex.net/v1/disk/resources?path=%2Fvk_backup",
-                     headers={"Authorization": "OAuth " + self.access_token})
-        download_url = requests.post('https://cloud-api.yandex.net/v1/disk/resources/upload?url='
-                                     + file_url.replace('/', '%2F').replace(":", "%3A")
-                                     + "&path=%2Fvk_backup%2F" + file_name,
-                                     headers={"Authorization": "OAuth " + self.access_token})
-        if download_url.status_code == 202:
-            print('Start download process')
-            while self.get_status(download_url.json()['href']) == 'in-progress':
-                if self.get_status(download_url.json()['href']) == 'failed':
-                    print("Download failed")
-                continue
-            if self.get_status(download_url.json()['href']) == 'success':
-                print("Successfully downloaded")
+    for i, ids in enumerate(data):
+        PySimpleGUI.one_line_progress_meter('Загрузка в Яндекс Диск', i + 1, len(data), 'Файлы: ')
+        time.sleep(1)
+        correct_url = "&url="
+        # ya_params = f"path=%2Fnetology%2F{ids}.jpg"
+        ya_params = f"path={ids}.jpg"
+        for symbol in data[ids][index]:
+            if symbol == "/":
+                correct_url += "%2F"
+            elif symbol == "=":
+                correct_url += "%3D"
+            elif symbol == ":":
+                correct_url += "%3A"
+            elif symbol == "?":
+                correct_url += "%3F"
+            elif symbol == "&":
+                correct_url += "%26"
+            else:
+                correct_url += symbol
+        url = ya_upload_url + ya_params + correct_url
+        requests.post(url=url, headers=ya_headers)
+        with open("upload.txt", "a", encoding="utf-8") as file:
+            file.write(f"{ids}.jpg\n")
+    print("Данные загружены\n")
+
+
+answer = 0
+pictures = []
+element_id = 0
+while answer != 4:
+    print("1 - скачать с VK\n2 - загрузить на яндекс диск\n3 - выход")
+    answer = int(input())
+    if answer == 1:
+        pictures = vk_download()
+        element_id = 2
+    elif answer == 2:
+        if pictures:
+            ya_disk_upload(pictures, element_id)
         else:
-            print("Error")
-            pprint(download_url.json())
-
-
-class VkBackup:
-
-    access_token = "958eb5d439726565e9333aa30e50e0f937ee432e927f0dbd541c541887d919a7c56f95c04217915c32008"
-
-    def __init__(self, vk_id: str):
-        self.vk_id = vk_id
-
-    @staticmethod
-    def set_photo_name(output_date, photo):
-        for date in output_date:
-            if str(photo['likes']['count']) + ".jpg" == date['file_name']:
-                photo_date = datetime.fromtimestamp(photo['date'])
-                month = str(photo_date.month) if photo_date.month > 9 else "0" + str(photo_date.month)
-                day = str(photo_date.day) if photo_date.day > 9 else "0" + str(photo_date.day)
-                file_name = str(photo['likes']['count']) + "_" + day + month + str(photo_date.year)
-                return file_name + ".jpg"
-        return str(photo['likes']['count']) + ".jpg"
-
-    def get_photos(self):
-        return requests.get("https://api.vk.com/method/photos.get?owneer_id=" + self.vk_id
-                            + "&album_id=profile&extended=1&access_token=" + self.access_token + "&v=5.122").json()
-
-    def backup_photos(self, uploader):
-        output_date = []
-        photos = self.get_photos()['response']['items']
-        total_photos = self.get_photos()['response']['count']
-        for counter, photo in enumerate(photos):
-            print(f"\nProcessing {counter + 1} photo out of {total_photos}")
-            file_name = self.set_photo_name(output_date, photo)
-            output_date.append({"file_name": file_name, "size": photo['sizes'][-1]['type']})
-            uploader.upload(file_name, photo['sizes'][-1]['url'])
-        with open(self.vk_id + "_photos.json", "w") as file:
-            json.dump(output_date, file)
-
-
-def main():
-    print("Введите yandex token:")
-    uploader_photos = YaUploader(input())
-    print("Введите vk token:")
-    vk_backup = VkBackup(input())
-    vk_backup.backup_photos(uploader_photos)
-
-
-main()
+            print("Не указали откуда скачивать фото\n")
+    else:
+        break
